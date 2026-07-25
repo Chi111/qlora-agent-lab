@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from qlora_lab.agent.app import create_app, requests_human_handoff
 from qlora_lab.agent.conversations import ConversationStore
+from qlora_lab.agent.runtime import SYSTEM_PROMPT
 from qlora_lab.agent.settings import AgentSettings
 
 
@@ -136,3 +137,10 @@ def test_handoff_intent_requires_explicit_human_transfer_action() -> None:
     assert requests_human_handoff("请联系真人客服")
     assert not requests_human_handoff("我想了解人工客服政策")
     assert not requests_human_handoff("我不要转人工客服")
+
+
+def test_system_prompt_defines_tone_and_topic_boundary() -> None:
+    assert "非客服问题应礼貌拒绝" in SYSTEM_PROMPT
+    assert "混合问题只处理客服部分" in SYSTEM_PROMPT
+    assert "专业、耐心、克制" in SYSTEM_PROMPT
+    assert "不承诺无法保证的结果" in SYSTEM_PROMPT
