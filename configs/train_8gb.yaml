@@ -1,0 +1,19 @@
+# Safe starting point for an RTX 5060 8 GB.
+base_model_id: Qwen/Qwen3-1.7B
+train_file: data/train.jsonl
+eval_file: data/eval.jsonl
+output_dir: artifacts/qlora-adapter
+max_length: 512
+epochs: 2
+learning_rate: 0.0002
+batch_size: 1
+gradient_accumulation_steps: 8
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+logging_steps: 5
+save_steps: 50
+eval_steps: 50
+seed: 42
+resume_from_checkpoint: null
+

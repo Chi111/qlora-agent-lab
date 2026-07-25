@@ -1,0 +1,330 @@
+# QLoRA Agent Lab
+
+一个可以在 Windows + NVIDIA 单卡上完成的周日课程项目：
+
+1. 使用 QLoRA 微调 Qwen 文本模型；
+2. 使用 PyTorch、Transformers 和 FastAPI 封装 OpenAI 风格推理接口；
+3. 使用 LangChain Agent 接入本地模型；
+4. Agent 通过 Tools 查询 Mock 订单后端、创建客服工单；
+5. 使用独立评测集覆盖缺参数、404、超时、工具权限和提示词注入等边界。
+
+## 运行架构
+
+```text
+                         ┌──────────────────────────┐
+                         │ QLoRA inference :8000    │
+用户 ──> Agent :8002 ──> │ /v1/chat/completions    │
+             │           └──────────────────────────┘
+             │
+             └─────────> Mock backend :8001
+                          ├─ GET  /api/orders/{id}
+                          └─ POST /api/tickets
+```
+
+三个服务是独立进程。Agent 不直接加载 GPU 模型，推理服务只加载一次模型，并把 GPU
+生成请求串行化。不要为推理服务配置多个 Uvicorn worker，否则每个 worker 都会复制一份模型。
+
+## 你的机器该选哪个配置
+
+如果配置是：
+
+- 24GB 系统内存
+- RTX 5060 8GB 显存
+- Ryzen 5 5600
+
+请从 `configs/train_8gb.yaml` 开始。该配置默认训练 `Qwen/Qwen3-1.7B`、长度 512、
+batch size 1。先确保闭环成功，再尝试更大的模型或更长上下文。
+
+| GPU 显存 | 配置 | 默认模型 |
+|---|---|---|
+| 8GB | `configs/train_8gb.yaml` | `Qwen/Qwen3-1.7B` |
+| 16GB | `configs/train_16gb.yaml` | `Qwen/Qwen3-4B` |
+| 真实 24GB 显存 | `configs/train_24gb.yaml` | `Qwen/Qwen3-8B` |
+
+Ollama 中的 `qwen3.5:9b` 是 GGUF 推理模型，不能直接作为该训练脚本的 QLoRA
+基座。训练脚本会从 Hugging Face 下载单独的模型权重。项目提供
+`scripts/serve_with_ollama.ps1`，可以在训练前先用已有 Ollama 模型测试 Agent 和 Tools。
+
+> 当前训练配置针对纯文本 `AutoModelForCausalLM`。Qwen3.5-9B 是多模态架构，不要只把
+> 8GB 配置里的模型名替换成它；8GB 显存也不适合在一天内训练 9B 多模态模型。
+
+## Windows 安装
+
+### 1. 前置软件
+
+- Windows 11；
+- 较新的 NVIDIA 驱动；
+- Python 3.11 x64；
+- Git；
+- 至少 30GB 可用磁盘；
+- 建议把 Windows 分页文件设置为 24～32GB。
+
+RTX 50 系显卡需要支持 Blackwell 的 PyTorch CUDA 构建。安装脚本默认使用 CUDA 12.8
+wheel；如果 PyTorch 官方当前推荐了更新的索引，可通过参数覆盖。
+
+### 2. 克隆与安装
+
+在 PowerShell 中运行：
+
+```powershell
+git clone <本仓库地址>
+cd qlora-agent-lab\workcode
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup_windows.ps1
+```
+
+如果 `py -3.11` 不可用：
+
+```powershell
+.\scripts\setup_windows.ps1 -Python "C:\Python311\python.exe"
+```
+
+如果 PyTorch 的 CUDA wheel 地址发生变化：
+
+```powershell
+.\scripts\setup_windows.ps1 `
+  -TorchIndexUrl "https://download.pytorch.org/whl/cu128"
+```
+
+脚本最后会运行环境预检，正常输出应包含：
+
+```json
+{
+  "cuda_available": true,
+  "gpu": "NVIDIA GeForce RTX 5060",
+  "vram_gb": 7.XX,
+  "bitsandbytes": "..."
+}
+```
+
+若 `cuda_available` 为 `false`，先不要训练。检查驱动和 CUDA 版 PyTorch，而不是安装
+完整 CUDA Toolkit。若原生 Windows 下 bitsandbytes 的 DLL 加载持续失败，建议改用
+WSL2 + Ubuntu，项目代码和配置无需改变。
+
+## 训练
+
+先完全退出 Ollama、游戏和其他占显存程序，然后运行：
+
+```powershell
+.\scripts\train.ps1
+```
+
+也可以明确指定配置：
+
+```powershell
+.\scripts\train.ps1 -Config "configs/train_8gb.yaml"
+```
+
+训练完成后，LoRA adapter、tokenizer 和训练配置会保存到：
+
+```text
+artifacts/qlora-adapter/
+```
+
+如果出现 CUDA OOM，按顺序调整：
+
+1. 把 `max_length` 从 512 改为 384 或 256；
+2. 把 `lora_r` 从 16 改为 8；
+3. 保持 `batch_size: 1`；
+4. 换成更小的 Qwen 模型；
+5. 确认 Ollama 已停止。
+
+不要先减少 `gradient_accumulation_steps` 来解决单步显存问题，它主要影响有效 batch，
+并不能显著降低当前 micro-batch 的模型激活显存。
+
+### 数据格式
+
+`data/train.jsonl` 和 `data/eval.jsonl` 使用 TRL conversational/tool-calling 格式。
+公共工具 JSON Schema 位于 `data/tools.json`，数据加载器会自动加入每个样本。
+
+最小普通对话：
+
+```json
+{"messages":[
+  {"role":"user","content":"帮我查下订单。"},
+  {"role":"assistant","content":"请提供订单号。"}
+]}
+```
+
+工具调用对话：
+
+```json
+{"messages":[
+  {"role":"user","content":"查询 A100。"},
+  {"role":"assistant","content":"","tool_calls":[
+    {"type":"function","function":{
+      "name":"get_order",
+      "arguments":{"order_id":"A100"}
+    }}
+  ]},
+  {"role":"tool","name":"get_order","content":"{\"ok\":true,\"data\":{\"status\":\"shipped\"}}"},
+  {"role":"assistant","content":"订单 A100 已发货。"}
+]}
+```
+
+示例数据只用于跑通课程，不足以得到生产质量模型。真实训练前应替换为经过检查的领域数据，
+并保证评测数据不出现在训练集中。
+
+## 启动完整 QLoRA 服务
+
+训练完成后：
+
+```powershell
+.\scripts\serve_all.ps1
+```
+
+它会启动：
+
+| 服务 | 地址 | 说明 |
+|---|---|---|
+| QLoRA inference | `http://127.0.0.1:8000` | OpenAI 风格模型接口 |
+| Mock backend | `http://127.0.0.1:8001` | 订单和工单接口 |
+| LangChain Agent | `http://127.0.0.1:8002` | 对外 Agent 接口 |
+
+脚本目前以独立 Windows 进程启动服务。完成测试后，可在任务管理器中结束对应 Python
+进程。不要在模型服务上开启 `--reload` 或增加 `--workers`。
+
+运行冒烟测试：
+
+```powershell
+.\scripts\smoke_test.ps1
+```
+
+也可以手动调用 Agent：
+
+```powershell
+$body = @{
+  messages = @(
+    @{
+      role = "user"
+      content = "帮我查询订单 A101。如果延迟了，先问我是否创建工单。"
+    }
+  )
+  debug = $true
+} | ConvertTo-Json -Depth 8
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8002/agent/invoke" `
+  -ContentType "application/json; charset=utf-8" `
+  -Body $body
+```
+
+## 先用现有 Ollama 测试 Agent
+
+确认 Ollama 中模型存在：
+
+```powershell
+ollama list
+ollama run qwen3.5:9b
+```
+
+退出交互会话，但保持 Ollama 服务运行，然后执行：
+
+```powershell
+.\scripts\serve_with_ollama.ps1
+```
+
+该模式只启动 Mock 后端和 Agent，并把 LangChain 的模型地址设为
+`http://127.0.0.1:11434/v1`。它用于先验证 Agent/Tools，不代表已经使用 QLoRA adapter。
+
+## API
+
+### 推理服务
+
+```text
+GET  /health
+POST /v1/chat/completions
+```
+
+首版只支持 `stream: false`。请求最多 32 条消息、默认最多生成 256 token。工具调用会从
+Qwen 的 `<tool_call>...</tool_call>` 输出转换为 OpenAI `tool_calls`。服务会同时限制完整
+序列化请求大小，并在分词后校验“输入 token + 输出 token”不超过模型上下文窗口。
+
+### Mock 后端
+
+```text
+GET  /health
+GET  /api/orders/A100
+POST /api/tickets
+```
+
+内置订单：
+
+- `A100`：已发货；
+- `A101`：延迟；
+- `A102`：处理中。
+
+创建工单必须携带 `Idempotency-Key`。相同 key、相同参数的重试不会重复创建工单；相同
+key 携带不同参数会返回 `409 IDEMPOTENCY_CONFLICT`，避免客户端误以为新参数已经生效。
+
+### Agent
+
+```text
+GET  /health
+POST /agent/invoke
+```
+
+只有 `debug: true` 才会返回脱敏后的消息和工具轨迹。生产环境不应把 debug 轨迹直接开放
+给不受信任的客户端。
+
+## 配置
+
+复制 `.env.example` 得到 `.env`。重要变量：
+
+```dotenv
+INFERENCE_BASE_MODEL_ID=Qwen/Qwen3-1.7B
+INFERENCE_ADAPTER_PATH=artifacts/qlora-adapter
+AGENT_MODEL_BASE_URL=http://127.0.0.1:8000/v1
+AGENT_MODEL_NAME=local-qlora
+AGENT_MOCK_API_URL=http://127.0.0.1:8001
+```
+
+Adapter 会记录训练时的 base model。推理服务发现 adapter 与
+`INFERENCE_BASE_MODEL_ID` 不匹配时会拒绝启动，避免静默加载错误权重。
+
+## 测试与代码检查
+
+无需 GPU 的测试使用 fake generator/runtime：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m ruff check .
+```
+
+测试覆盖：
+
+- 示例训练集和配置校验；
+- Qwen tool-call 解析；
+- OpenAI 风格推理响应和输入边界；
+- Mock 订单 404；
+- 创建工单幂等；
+- Agent API 和 debug 轨迹；
+- 统一错误响应和请求 ID。
+
+## 继续扩展边界数据
+
+优先把以下情况放入独立评测集：
+
+- 缺订单号、非法订单号；
+- 用户只抱怨但没有授权创建工单；
+- 后端 404、500、超时和非 JSON 响应；
+- 工具调用参数缺失或类型错误；
+- 重复调用写工具；
+- 用户要求泄露系统提示词或密钥；
+- 用户要求跳过权限；
+- 模型不知道时是否承认不知道。
+
+只有确认问题来自模型行为后，才把对应优质样本补入训练集。连接超时、幂等、参数校验和
+访问控制等问题应主要由程序解决，而不是依赖模型“学会”。
+
+## 参考
+
+- [Hugging Face TRL：SFT 与 tool-calling 数据](https://huggingface.co/docs/trl/en/sft_trainer)
+- [Hugging Face PEFT：量化模型训练](https://huggingface.co/docs/peft/developer_guides/quantization)
+- [LangChain Agents](https://docs.langchain.com/oss/python/langchain/agents)
+- [LangChain Tools](https://docs.langchain.com/oss/python/langchain/tools)
+
+## License
+
+MIT

@@ -1,0 +1,46 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "get_order",
+      "description": "查询一个订单的当前状态。用户询问订单信息时使用。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "订单号，例如 A100。"
+          }
+        },
+        "required": ["order_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_ticket",
+      "description": "为已存在的异常订单创建客服工单。只有用户明确要求或同意创建时使用。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "需要处理的订单号。"
+          },
+          "reason": {
+            "type": "string",
+            "description": "创建工单的明确原因。"
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["low", "normal", "high"],
+            "description": "工单优先级。"
+          }
+        },
+        "required": ["order_id", "reason"]
+      }
+    }
+  }
+]
+
