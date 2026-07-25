@@ -13,8 +13,8 @@ def test_example_datasets_are_valid() -> None:
     train_rows = read_jsonl(Path("data/train.jsonl"))
     eval_rows = read_jsonl(Path("data/eval.jsonl"))
 
-    assert len(train_rows) >= 60
-    assert len(eval_rows) >= 15
+    assert len(train_rows) >= 100
+    assert len(eval_rows) >= 22
     assert all(isinstance(json.loads(row["tools"]), list) for row in train_rows)
 
 
