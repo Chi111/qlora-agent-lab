@@ -1,5 +1,5 @@
 # Safe starting point for an RTX 5060 8 GB.
-base_model_id: Qwen/Qwen3-1.7B
+base_model_id: D:\models\Qwen3-1.7B
 train_file: data/train.jsonl
 eval_file: data/eval.jsonl
 output_dir: artifacts/qlora-adapter
