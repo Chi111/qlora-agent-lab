@@ -254,6 +254,10 @@ Set-ExecutionPolicy -Scope Process Bypass
 影响。首次安装需要联网。无需为 Mastra 重新下载模型，也不需要再训练一次；它直接调用
 `http://127.0.0.1:8000/v1` 上已经加载 LoRA adapter 的推理服务。
 
+项目只批准 `esbuild` 执行依赖安装脚本，这是 Mastra 打包所必需的本地二进制；其他依赖
+仍保持 pnpm 的默认禁止策略。如果曾看到 `ERR_PNPM_IGNORED_BUILDS`，同步最新代码后直接
+重新运行 `setup_mastra.ps1`，无需执行交互式的 `pnpm approve-builds`。
+
 ### 2. 一键启动
 
 训练完成并确认 `artifacts\qlora-adapter\adapter_config.json` 存在后运行：

@@ -33,6 +33,8 @@ if (-not (Test-Path ".env")) {
 
 Write-Host "Installing pinned Mastra dependencies..."
 Invoke-ProjectPnpm -PnpmArgs @("install", "--frozen-lockfile")
+Write-Host "Building the approved esbuild binary..."
+Invoke-ProjectPnpm -PnpmArgs @("rebuild", "esbuild")
 Write-Host "Running TypeScript tests and build..."
 Invoke-ProjectPnpm -PnpmArgs @("run", "check")
 Write-Host ""
