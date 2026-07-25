@@ -34,7 +34,7 @@ class ChatCompletionRequest(BaseModel):
     temperature: float = Field(default=0.2, ge=0, le=2)
     top_p: float = Field(default=0.9, gt=0, le=1)
     max_tokens: int = Field(default=256, ge=1, le=2048)
-    stream: Literal[False] = False
+    stream: bool = False
     stop: str | list[str] | None = None
     tools: list[ToolDefinition] | None = Field(default=None, max_length=32)
     tool_choice: Any | None = None

@@ -4,7 +4,7 @@
 
 1. 使用 QLoRA 微调 Qwen 文本模型；
 2. 使用 PyTorch、Transformers 和 FastAPI 封装 OpenAI 风格推理接口；
-3. 使用 LangChain Agent 接入本地模型；
+3. 使用 LangChain 或 Mastra Agent 接入本地模型；
 4. Agent 通过 Tools 查询 Mock 订单后端、创建客服工单；
 5. 使用本地知识库回答产品、配送与售后问题；
 6. 提供浏览器客服页面、SQLite 多轮会话留存和确定性的转人工入口；
@@ -230,6 +230,79 @@ Invoke-RestMethod `
   -Body $body
 ```
 
+## 使用 Mastra 接入训练后的模型
+
+Mastra 版本位于 `mastra/`，使用 TypeScript/Node.js 编排 Agent，但模型推理仍由 Python
+服务完成。它已经接入：
+
+- `get_order`：实时查询订单，只把订单号、状态、商品和更新时间交给模型；
+- `search_knowledge`：在 `data/knowledge/*.md` 中进行本地 BM25 检索；
+- `create_ticket`：创建工单，带稳定幂等键，并强制要求 Mastra 人工批准；
+- SQLite 多轮记忆；
+- 中文客服范围、专业克制语气、非客服问题拒答和知识库提示注入边界。
+
+### 1. 安装 Node.js 和 Mastra 依赖
+
+安装 **Node.js 22.18 或更高版本（推荐当前 LTS）**。在项目目录运行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup_mastra.ps1
+```
+
+脚本会通过 `npx` 运行固定版本的 pnpm，并使用锁文件安装依赖，不受系统全局 pnpm 版本
+影响。首次安装需要联网。无需为 Mastra 重新下载模型，也不需要再训练一次；它直接调用
+`http://127.0.0.1:8000/v1` 上已经加载 LoRA adapter 的推理服务。
+
+### 2. 一键启动
+
+训练完成并确认 `artifacts\qlora-adapter\adapter_config.json` 存在后运行：
+
+```powershell
+.\scripts\serve_mastra.ps1
+```
+
+脚本会启动 Mock 后端（8001）、QLoRA 推理服务（8000）和 Mastra Studio（4111），并等待
+模型真正加载完成。浏览器打开：
+
+```text
+http://127.0.0.1:4111
+```
+
+在 Studio 中选择 `customer-service-agent`。首次建议依次测试：
+
+1. `帮我查询订单 A100。`
+2. `七天内可以退货吗？`
+3. `帮我写一段 Python 快速排序。`（应礼貌拒绝）
+4. `订单 A101 延迟了，帮我创建一个高优先级工单。`
+
+第 4 条会先出现工具审批。核对订单号、原因和优先级后再点击批准；拒绝审批不会写入工单。
+可在另一个 PowerShell 窗口运行接口冒烟测试：
+
+```powershell
+.\scripts\smoke_test_mastra.ps1
+```
+
+如果只修改了 Mastra 提示词或工具代码，不需要重训；如果要让 1.7B 模型本身更稳定地形成
+新语气和拒答习惯，则同步新的 `data/train.jsonl` / `data/eval.jsonl` 后重新训练 adapter。
+
+### 3. Mastra 配置
+
+首次安装会从 `mastra\.env.example` 复制 `mastra\.env`。默认值已经适用于本项目：
+
+```dotenv
+LOCAL_LLM_BASE_URL=http://127.0.0.1:8000/v1
+LOCAL_LLM_MODEL=local-qlora
+MOCK_API_URL=http://127.0.0.1:8001
+KNOWLEDGE_DIR=../data/knowledge
+```
+
+SQLite 默认稳定写入 `mastra\mastra.db`；只有连接外部 libSQL 时才需要另设
+`MASTRA_DB_URL`。
+
+这个演示没有用户登录和订单归属校验，只能监听本机地址测试。部署到局域网或公网前，必须
+在 Mastra API 和订单后端前增加身份认证、授权、限流与审计。
+
 ## 先用现有 Ollama 测试 Agent
 
 确认 Ollama 中模型存在：
@@ -257,9 +330,11 @@ GET  /health
 POST /v1/chat/completions
 ```
 
-首版只支持 `stream: false`。请求最多 32 条消息、默认最多生成 256 token。工具调用会从
-Qwen 的 `<tool_call>...</tool_call>` 输出转换为 OpenAI `tool_calls`。服务会同时限制完整
-序列化请求大小，并在分词后校验“输入 token + 输出 token”不超过模型上下文窗口。
+接口支持 `stream: false`，也支持 Mastra/AI SDK 所需的 OpenAI SSE 流式协议。当前流式
+实现会先完成一次 GPU 生成，再把结果作为兼容的 SSE chunk 返回，并不是真正逐 token
+输出。请求最多 32 条消息、默认最多生成 256 token。工具调用会从 Qwen 的
+`<tool_call>...</tool_call>` 输出转换为 OpenAI `tool_calls`。服务会同时限制完整序列化
+请求大小，并在分词后校验“输入 token + 输出 token”不超过模型上下文窗口。
 
 ### Mock 后端
 
@@ -372,6 +447,8 @@ Adapter 会记录训练时的 base model。推理服务发现 adapter 与
 - [Hugging Face PEFT：量化模型训练](https://huggingface.co/docs/peft/developer_guides/quantization)
 - [LangChain Agents](https://docs.langchain.com/oss/python/langchain/agents)
 - [LangChain Tools](https://docs.langchain.com/oss/python/langchain/tools)
+- [Mastra Agents](https://mastra.ai/docs/agents/overview)
+- [AI SDK OpenAI-compatible Provider](https://ai-sdk.dev/providers/openai-compatible-providers)
 
 ## License
 

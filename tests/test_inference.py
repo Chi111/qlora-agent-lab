@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import pytest
@@ -29,6 +30,25 @@ class FakeGenerator:
 
     def health(self) -> dict[str, Any]:
         return {"status": "ready", "model_loaded": True, "device": "fake"}
+
+
+class FakeToolGenerator(FakeGenerator):
+    def generate(self, request: ChatCompletionRequest) -> GenerationResult:
+        return GenerationResult(
+            content=None,
+            tool_calls=[
+                {
+                    "id": "call-test",
+                    "type": "function",
+                    "function": {
+                        "name": "get_order",
+                        "arguments": '{"order_id":"A100"}',
+                    },
+                }
+            ],
+            prompt_tokens=7,
+            completion_tokens=4,
+        )
 
 
 def test_parse_qwen_tool_call() -> None:
@@ -77,7 +97,7 @@ def test_openai_compatible_completion() -> None:
     assert response.headers["X-Request-ID"]
 
 
-def test_streaming_is_rejected_with_structured_error() -> None:
+def test_openai_compatible_buffered_stream() -> None:
     app = create_app(FakeGenerator(), InferenceSettings())
 
     with TestClient(app) as client:
@@ -89,8 +109,43 @@ def test_streaming_is_rejected_with_structured_error() -> None:
             },
         )
 
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = [
+        line.removeprefix("data: ")
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert events[-1] == "[DONE]"
+    first_chunk = json.loads(events[0])
+    final_chunk = json.loads(events[1])
+    assert first_chunk["object"] == "chat.completion.chunk"
+    assert first_chunk["choices"][0]["delta"]["content"] == "收到：你好"
+    assert final_chunk["choices"][0]["finish_reason"] == "stop"
+    assert final_chunk["usage"]["total_tokens"] == 8
+
+
+def test_buffered_stream_includes_openai_tool_call_delta() -> None:
+    app = create_app(FakeToolGenerator(), InferenceSettings())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "messages": [{"role": "user", "content": "查询 A100"}],
+                "stream": True,
+            },
+        )
+
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and line != "data: [DONE]"
+    ]
+    tool_call = events[0]["choices"][0]["delta"]["tool_calls"][0]
+    assert tool_call["index"] == 0
+    assert tool_call["function"]["name"] == "get_order"
+    assert events[1]["choices"][0]["finish_reason"] == "tool_calls"
 
 
 def test_unknown_model_is_rejected() -> None:
