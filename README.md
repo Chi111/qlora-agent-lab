@@ -6,19 +6,22 @@
 2. 使用 PyTorch、Transformers 和 FastAPI 封装 OpenAI 风格推理接口；
 3. 使用 LangChain Agent 接入本地模型；
 4. Agent 通过 Tools 查询 Mock 订单后端、创建客服工单；
-5. 使用独立评测集覆盖缺参数、404、超时、工具权限和提示词注入等边界。
+5. 使用本地知识库回答产品、配送与售后问题；
+6. 提供浏览器客服页面、SQLite 多轮会话留存和确定性的转人工入口；
+7. 使用独立评测集覆盖缺参数、404、超时、工具权限和提示词注入等边界。
 
 ## 运行架构
 
 ```text
                          ┌──────────────────────────┐
                          │ QLoRA inference :8000    │
-用户 ──> Agent :8002 ──> │ /v1/chat/completions    │
-             │           └──────────────────────────┘
-             │
-             └─────────> Mock backend :8001
-                          ├─ GET  /api/orders/{id}
-                          └─ POST /api/tickets
+浏览器 ──> Agent :8002 ──> │ /v1/chat/completions    │
+              │           └──────────────────────────┘
+              ├─────────> 本地 Markdown 知识库（CPU BM25 检索）
+              ├─────────> SQLite 会话记录 / 人工接管状态
+              └─────────> Mock backend :8001
+                           ├─ GET  /api/orders/{id}
+                           └─ POST /api/tickets
 ```
 
 三个服务是独立进程。Agent 不直接加载 GPU 模型，推理服务只加载一次模型，并把 GPU
@@ -48,6 +51,11 @@ Ollama 中的 `qwen3.5:9b` 是 GGUF 推理模型，不能直接作为该训练�
 > 当前训练配置针对纯文本 `AutoModelForCausalLM`。Qwen3.5-9B 是多模态架构，不要只把
 > 8GB 配置里的模型名替换成它；8GB 显存也不适合在一天内训练 9B 多模态模型。
 
+四份课程材料里的 Qwen3-8B 方案建立在 RTX 4090 的 **24GB 显存** 上。你的“24GB”
+是系统内存，不会改变 RTX 5060 的显存上限，因此本项目保留同一套 QLoRA 方法，但把首轮
+基座缩到 1.7B。训练出的仍是可插拔 LoRA adapter；等迁移到真实 24GB 显存机器时，再切换
+`configs/train_24gb.yaml` 训练 Qwen3-8B。
+
 ## Windows 安装
 
 ### 1. 前置软件
@@ -68,7 +76,7 @@ wheel；如果 PyTorch 官方当前推荐了更新的索引，可通过参数覆
 
 ```powershell
 git clone <本仓库地址>
-cd qlora-agent-lab\workcode
+cd qlora-agent-lab
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\setup_windows.ps1
 ```
@@ -121,6 +129,13 @@ WSL2 + Ubuntu，项目代码和配置无需改变。
 artifacts/qlora-adapter/
 ```
 
+`train.ps1` 会依次执行：
+
+1. 校验 JSONL 格式、工具声明、重复样本和训练/评测集泄漏；
+2. 检查 CUDA、bitsandbytes、GPU 型号、显存和所选模型档位；
+3. 使用 NF4 + double quant 的 4-bit QLoRA 训练；
+4. 只对 assistant 输出计算损失，并保存 adapter 与 tokenizer。
+
 如果出现 CUDA OOM，按顺序调整：
 
 1. 把 `max_length` 从 512 改为 384 或 256；
@@ -162,8 +177,10 @@ artifacts/qlora-adapter/
 ]}
 ```
 
-示例数据只用于跑通课程，不足以得到生产质量模型。真实训练前应替换为经过检查的领域数据，
-并保证评测数据不出现在训练集中。
+当前示例包含 71 条训练对话和 15 条独立评测对话，覆盖订单查询、知识库检索、工单授权、
+工具超时、隐私保护、提示注入、情绪安抚和人工转接等路径。它适合跑通课程并建立第一版
+客服行为基线，但仍不足以代表生产环境的真实分布。上线前应持续加入经过脱敏和人工检查的
+真实领域数据，并保证评测数据不出现在训练集中。
 
 ## 启动完整 QLoRA 服务
 
@@ -180,6 +197,9 @@ artifacts/qlora-adapter/
 | QLoRA inference | `http://127.0.0.1:8000` | OpenAI 风格模型接口 |
 | Mock backend | `http://127.0.0.1:8001` | 订单和工单接口 |
 | LangChain Agent | `http://127.0.0.1:8002` | 对外 Agent 接口 |
+
+浏览器打开 `http://127.0.0.1:8002/` 即可使用客服页面。会话记录默认写入
+`artifacts/conversations.sqlite3`，刷新页面后仍可通过浏览器保存的 session ID 延续对话。
 
 脚本目前以独立 Windows 进程启动服务。完成测试后，可在任务管理器中结束对应 Python
 进程。不要在模型服务上开启 `--reload` 或增加 `--workers`。
@@ -263,10 +283,34 @@ key 携带不同参数会返回 `409 IDEMPOTENCY_CONFLICT`，避免客户端误�
 ```text
 GET  /health
 POST /agent/invoke
+POST /agent/chat
+GET  /agent/sessions/{session_id}
+POST /agent/sessions/{session_id}/handoff
 ```
 
 只有 `debug: true` 才会返回脱敏后的消息和工具轨迹。生产环境不应把 debug 轨迹直接开放
 给不受信任的客户端。
+
+`/agent/chat` 是浏览器页面使用的多轮接口：服务端从 SQLite 恢复最近会话，再调用 Agent。
+用户明确提出“转人工客服”时，由程序直接把会话切换为 `waiting_human`，不依赖模型是否
+正确理解。该演示服务只监听 `127.0.0.1`；若改成公网服务，必须在会话和订单接口前增加
+真实身份认证与订单归属校验。
+
+### 本地 RAG
+
+知识文件位于 `data/knowledge/*.md`。课程强调静态资料走 RAG、实时订单走 Tools，本项目
+按这个边界实现：
+
+- `search_knowledge`：产品说明、配送规则、退换货和退款政策；
+- `get_order`：具体订单的实时状态；
+- `create_ticket`：用户明确授权后的写操作。
+
+`create_ticket` 不只依赖提示词：运行时会检查用户当前一轮是否明确要求创建工单，或是否
+在客服询问后明确同意；否则工具返回 `WRITE_NOT_AUTHORIZED`。订单工具只把订单号、
+状态、商品和更新时间交给模型，Mock 后端中的客户姓名、金额不会进入模型上下文。
+
+默认检索器是 CPU 上的轻量 BM25，不占用宝贵的 8GB GPU 显存。后续数据量增大后，可以
+把 `KnowledgeBase` 替换为独立 embedding/向量库服务，Agent 的工具契约无需改变。
 
 ## 配置
 
@@ -278,6 +322,8 @@ INFERENCE_ADAPTER_PATH=artifacts/qlora-adapter
 AGENT_MODEL_BASE_URL=http://127.0.0.1:8000/v1
 AGENT_MODEL_NAME=local-qlora
 AGENT_MOCK_API_URL=http://127.0.0.1:8001
+AGENT_KNOWLEDGE_DIR=data/knowledge
+AGENT_CONVERSATION_DB_PATH=artifacts/conversations.sqlite3
 ```
 
 Adapter 会记录训练时的 base model。推理服务发现 adapter 与
@@ -300,6 +346,8 @@ Adapter 会记录训练时的 base model。推理服务发现 adapter 与
 - Mock 订单 404；
 - 创建工单幂等；
 - Agent API 和 debug 轨迹；
+- RAG 检索、多轮会话、会话持久化和确定性转人工；
+- 训练/评测数据重复与泄漏检查；
 - 统一错误响应和请求 ID。
 
 ## 继续扩展边界数据

@@ -27,7 +27,7 @@ ml = [
   "pyyaml>=6.0,<7",
   "safetensors>=0.5,<1",
   "transformers>=4.51,<6",
-  "trl>=0.29,<2",
+  "trl>=1.0,<2",
 ]
 agent = [
   "langchain>=1.0,<2",
@@ -40,6 +40,7 @@ dev = [
 ]
 [project.scripts]
 qlora-preflight = "qlora_lab.training.preflight:main"
+qlora-validate-data = "qlora_lab.training.validate_data:main"
 qlora-train = "qlora_lab.training.train:main"
 qlora-inference = "qlora_lab.inference.app:main"
 qlora-mock-backend = "qlora_lab.mock_backend.app:main"
@@ -47,6 +48,9 @@ qlora-agent = "qlora_lab.agent.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/qlora_lab"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"data/knowledge" = "qlora_lab/agent/knowledge_data"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

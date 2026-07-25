@@ -12,6 +12,6 @@ if (-not (Test-Path $python)) {
 }
 
 Write-Host "Stop Ollama and other GPU-heavy applications before training."
-& $python -m qlora_lab.training.preflight
+& $python -m qlora_lab.training.validate_data --config $Config
+& $python -m qlora_lab.training.preflight --config $Config
 & $python -m qlora_lab.training.train --config $Config
-

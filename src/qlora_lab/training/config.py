@@ -22,6 +22,9 @@ class TrainConfig:
     logging_steps: int = 5
     save_steps: int = 50
     eval_steps: int = 50
+    weight_decay: float = 0.01
+    warmup_ratio: float = 0.03
+    assistant_only_loss: bool = True
     seed: int = 42
     resume_from_checkpoint: str | None = None
 
@@ -61,6 +64,10 @@ class TrainConfig:
             raise ValueError("lora_dropout must be in [0, 1)")
         if self.epochs <= 0 or self.learning_rate <= 0:
             raise ValueError("epochs and learning_rate must be positive")
+        if self.weight_decay < 0:
+            raise ValueError("weight_decay cannot be negative")
+        if not 0 <= self.warmup_ratio < 1:
+            raise ValueError("warmup_ratio must be in [0, 1)")
         if not self.train_file.is_file():
             raise FileNotFoundError(f"Training dataset not found: {self.train_file}")
         if not self.eval_file.is_file():

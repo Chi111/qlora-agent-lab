@@ -41,6 +41,22 @@
         "required": ["order_id", "reason"]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "search_knowledge",
+      "description": "查询产品说明、配送规则、退换货和退款政策等非实时知识。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "需要从本地知识库检索的问题。"
+          }
+        },
+        "required": ["query"]
+      }
+    }
   }
 ]
-

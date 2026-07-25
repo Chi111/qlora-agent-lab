@@ -7,9 +7,11 @@ from pathlib import Path
 from qlora_lab.common.logging import configure_logging
 from qlora_lab.training.config import TrainConfig
 from qlora_lab.training.dataset import load_training_dataset
+from qlora_lab.training.validate_data import validate_dataset_pair
 
 
 def train(config: TrainConfig) -> None:
+    validate_dataset_pair(config.train_file, config.eval_file)
     try:
         import torch
         from peft import LoraConfig
@@ -63,6 +65,7 @@ def train(config: TrainConfig) -> None:
         per_device_eval_batch_size=1,
         gradient_accumulation_steps=config.gradient_accumulation_steps,
         gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         max_length=config.max_length,
         logging_steps=config.logging_steps,
         save_steps=config.save_steps,
@@ -73,10 +76,12 @@ def train(config: TrainConfig) -> None:
         load_best_model_at_end=False,
         optim="paged_adamw_8bit",
         lr_scheduler_type="cosine",
-        warmup_ratio=0.03,
+        warmup_ratio=config.warmup_ratio,
+        weight_decay=config.weight_decay,
         bf16=use_bf16,
         fp16=not use_bf16,
         packing=False,
+        assistant_only_loss=config.assistant_only_loss,
         report_to="none",
         seed=config.seed,
         data_seed=config.seed,

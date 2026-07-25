@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23116b52'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-size='34' fill='white'%3E澄%3C/text%3E%3C/svg%3E">
+  <title>澄心客服</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #15231f;
+      --muted: #68756f;
+      --paper: #fbfaf5;
+      --panel: rgba(255, 255, 255, 0.82);
+      --line: #dfe5de;
+      --brand: #116b52;
+      --brand-dark: #0c4f3d;
+      --brand-soft: #e1f1e9;
+      --user: #173f35;
+      --warning: #9b5c12;
+      --shadow: 0 24px 80px rgba(20, 45, 37, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 10%, rgba(218, 238, 224, 0.9), transparent 36%),
+        radial-gradient(circle at 90% 85%, rgba(240, 222, 181, 0.55), transparent 34%),
+        var(--paper);
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+
+    button, textarea { font: inherit; }
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+      width: min(1180px, calc(100% - 32px));
+      min-height: min(820px, calc(100vh - 32px));
+      margin: 16px auto;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      border-radius: 28px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      padding: 30px 24px;
+      color: #f7fff9;
+      background:
+        linear-gradient(160deg, rgba(17, 107, 82, 0.96), rgba(15, 69, 56, 0.99)),
+        var(--brand);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 48px;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.14);
+      font-weight: 800;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: 0.04em;
+    }
+
+    .brand p {
+      margin: 3px 0 0;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 12px;
+    }
+
+    .sidebar h2 {
+      margin: 0 0 12px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .sidebar-copy {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.76);
+      font-size: 14px;
+      line-height: 1.75;
+    }
+
+    .capabilities {
+      display: grid;
+      gap: 10px;
+      margin: 22px 0;
+    }
+
+    .capability {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 13px;
+    }
+
+    .capability::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #b9eacb;
+      content: "";
+    }
+
+    .sidebar-actions {
+      display: grid;
+      gap: 10px;
+      margin-top: auto;
+    }
+
+    .side-button {
+      min-height: 42px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 12px;
+      color: white;
+      background: rgba(255, 255, 255, 0.08);
+      cursor: pointer;
+    }
+
+    .side-button:hover { background: rgba(255, 255, 255, 0.15); }
+    .side-button:focus-visible, .send:focus-visible, .chip:focus-visible, textarea:focus-visible {
+      outline: 3px solid #f3cf82;
+      outline-offset: 2px;
+    }
+
+    .main {
+      display: grid;
+      min-width: 0;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px 30px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .topbar h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #27a878;
+      box-shadow: 0 0 0 4px rgba(39, 168, 120, 0.12);
+    }
+
+    .status.waiting .status-dot {
+      background: #d38a2d;
+      box-shadow: 0 0 0 4px rgba(211, 138, 45, 0.14);
+    }
+
+    .messages {
+      min-height: 0;
+      padding: 34px clamp(20px, 5vw, 64px);
+      overflow-y: auto;
+      scroll-behavior: smooth;
+    }
+
+    .message {
+      display: flex;
+      gap: 11px;
+      max-width: 760px;
+      margin-bottom: 22px;
+    }
+
+    .message.user {
+      flex-direction: row-reverse;
+      margin-left: auto;
+    }
+
+    .avatar {
+      display: grid;
+      flex: 0 0 34px;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 11px;
+      color: var(--brand-dark);
+      background: var(--brand-soft);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .user .avatar {
+      color: white;
+      background: var(--user);
+    }
+
+    .bubble {
+      padding: 13px 16px;
+      border: 1px solid var(--line);
+      border-radius: 5px 17px 17px;
+      background: white;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .user .bubble {
+      border-color: var(--user);
+      border-radius: 17px 5px 17px 17px;
+      color: white;
+      background: var(--user);
+    }
+
+    .typing .bubble {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .composer {
+      padding: 18px clamp(20px, 5vw, 64px) 26px;
+      border-top: 1px solid var(--line);
+      background: rgba(251, 250, 245, 0.76);
+    }
+
+    .chips {
+      display: flex;
+      gap: 8px;
+      padding-bottom: 12px;
+      overflow-x: auto;
+    }
+
+    .chip {
+      flex: 0 0 auto;
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: white;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .chip:hover { border-color: #a7b9b1; color: var(--ink); }
+
+    .input-wrap {
+      display: flex;
+      align-items: flex-end;
+      gap: 12px;
+      padding: 8px 8px 8px 16px;
+      border: 1px solid #cfd8d1;
+      border-radius: 18px;
+      background: white;
+      box-shadow: 0 8px 30px rgba(32, 59, 49, 0.06);
+    }
+
+    textarea {
+      width: 100%;
+      max-height: 130px;
+      min-height: 46px;
+      padding: 11px 0 8px;
+      resize: none;
+      border: 0;
+      outline: 0;
+      color: var(--ink);
+      background: transparent;
+      line-height: 1.5;
+    }
+
+    textarea::placeholder { color: #9aa49f; }
+
+    .send {
+      flex: 0 0 auto;
+      min-width: 76px;
+      min-height: 44px;
+      border: 0;
+      border-radius: 13px;
+      color: white;
+      background: var(--brand);
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .send:hover { background: var(--brand-dark); }
+    .send:disabled, textarea:disabled { cursor: not-allowed; opacity: 0.52; }
+
+    .hint {
+      margin: 9px 4px 0;
+      color: var(--muted);
+      font-size: 11px;
+      text-align: center;
+    }
+
+    @media (max-width: 760px) {
+      .shell {
+        display: block;
+        width: 100%;
+        min-height: 100vh;
+        margin: 0;
+        border: 0;
+        border-radius: 0;
+      }
+
+      .sidebar {
+        display: flex;
+        min-height: 0;
+        padding: 16px 18px;
+      }
+
+      .brand { margin: 0; }
+      .brand-mark { width: 36px; height: 36px; }
+      .sidebar > h2, .sidebar-copy, .capabilities { display: none; }
+      .sidebar-actions { display: flex; margin: 14px 0 0; }
+      .side-button { min-height: 36px; padding: 0 12px; }
+      .main { min-height: calc(100vh - 112px); }
+      .topbar { padding: 16px 18px; }
+      .messages { padding: 24px 16px; }
+      .composer { padding: 14px 14px 18px; }
+      .send { min-width: 62px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .messages { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">澄</div>
+        <div>
+          <h1>澄心客服</h1>
+          <p>本地模型 · 隐私优先</p>
+        </div>
+      </div>
+
+      <h2>我可以帮你</h2>
+      <p class="sidebar-copy">订单实时查询、售后政策解答、产品使用说明，以及异常工单创建。</p>
+      <div class="capabilities" aria-label="客服能力">
+        <span class="capability">订单与物流查询</span>
+        <span class="capability">退换货政策检索</span>
+        <span class="capability">异常工单处理</span>
+        <span class="capability">完整会话留存</span>
+      </div>
+
+      <div class="sidebar-actions">
+        <button class="side-button" id="handoffButton" type="button">转人工客服</button>
+        <button class="side-button" id="resetButton" type="button">新建会话</button>
+      </div>
+    </aside>
+
+    <section class="main" aria-label="客服对话">
+      <header class="topbar">
+        <h2>在线支持</h2>
+        <div class="status" id="status">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="statusText">AI 客服在线</span>
+        </div>
+      </header>
+
+      <div class="messages" id="messages" aria-live="polite" aria-label="对话消息"></div>
+
+      <form class="composer" id="chatForm">
+        <div class="chips" aria-label="常用问题">
+          <button class="chip" type="button" data-message="帮我查询订单 A101">查询订单 A101</button>
+          <button class="chip" type="button" data-message="显示器出现亮点怎么办？">显示器亮点</button>
+          <button class="chip" type="button" data-message="商品支持几天无理由退货？">退货政策</button>
+        </div>
+        <div class="input-wrap">
+          <label for="messageInput" hidden>输入客服问题</label>
+          <textarea id="messageInput" rows="1" maxlength="8000"
+            placeholder="请输入问题，Enter 发送"></textarea>
+          <button class="send" id="sendButton" type="submit">发送</button>
+        </div>
+        <p class="hint">订单信息来自本地 Mock 服务；知识回答会检索本地资料。</p>
+      </form>
+    </section>
+  </main>
+
+  <script>
+    const storageKey = "qlora-agent-session";
+    const messages = document.querySelector("#messages");
+    const form = document.querySelector("#chatForm");
+    const input = document.querySelector("#messageInput");
+    const sendButton = document.querySelector("#sendButton");
+    const handoffButton = document.querySelector("#handoffButton");
+    const resetButton = document.querySelector("#resetButton");
+    const status = document.querySelector("#status");
+    const statusText = document.querySelector("#statusText");
+    const welcomeMessage = "你好，我是本地智能客服。你可以查询订单、咨询售后政策或产品使用问题。";
+    let sessionId = localStorage.getItem(storageKey);
+    let busy = false;
+
+    function addMessage(role, content, extraClass = "") {
+      const item = document.createElement("article");
+      item.className = `message ${role} ${extraClass}`.trim();
+      const avatar = document.createElement("div");
+      avatar.className = "avatar";
+      avatar.textContent = role === "user" ? "你" : "AI";
+      avatar.setAttribute("aria-hidden", "true");
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = content;
+      item.append(avatar, bubble);
+      messages.append(item);
+      messages.scrollTop = messages.scrollHeight;
+      return item;
+    }
+
+    function setWaiting(waiting) {
+      status.classList.toggle("waiting", waiting);
+      statusText.textContent = waiting ? "等待人工接管" : "AI 客服在线";
+      input.disabled = waiting;
+      sendButton.disabled = waiting;
+      handoffButton.disabled = waiting;
+    }
+
+    function setBusy(value) {
+      busy = value;
+      if (!status.classList.contains("waiting")) {
+        input.disabled = value;
+        sendButton.disabled = value;
+        handoffButton.disabled = value;
+      }
+    }
+
+    async function parseResponse(response) {
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body?.error?.message || `请求失败（${response.status}）`);
+      }
+      return body;
+    }
+
+    async function sendMessage(content) {
+      if (!content.trim() || busy) return;
+      addMessage("user", content.trim());
+      input.value = "";
+      input.style.height = "auto";
+      setBusy(true);
+      const typing = addMessage("assistant", "正在查询…", "typing");
+      try {
+        const body = await parseResponse(await fetch("/agent/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, message: content.trim() })
+        }));
+        typing.remove();
+        sessionId = body.session_id;
+        localStorage.setItem(storageKey, sessionId);
+        addMessage("assistant", body.content);
+        setWaiting(body.status === "waiting_human");
+      } catch (error) {
+        typing.remove();
+        addMessage("assistant", `暂时无法完成请求：${error.message}`);
+      } finally {
+        setBusy(false);
+        input.focus();
+      }
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      sendMessage(input.value);
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    input.addEventListener("input", () => {
+      input.style.height = "auto";
+      input.style.height = `${Math.min(input.scrollHeight, 130)}px`;
+    });
+
+    document.querySelectorAll(".chip").forEach((chip) => {
+      chip.addEventListener("click", () => sendMessage(chip.dataset.message));
+    });
+
+    handoffButton.addEventListener("click", async () => {
+      if (!sessionId) {
+        await sendMessage("我要转人工客服");
+        return;
+      }
+      setBusy(true);
+      try {
+        const body = await parseResponse(await fetch(`/agent/sessions/${sessionId}/handoff`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: "用户点击转人工客服" })
+        }));
+        addMessage("assistant", body.content);
+        setWaiting(true);
+      } catch (error) {
+        addMessage("assistant", `转接失败：${error.message}`);
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    resetButton.addEventListener("click", () => {
+      sessionId = null;
+      localStorage.removeItem(storageKey);
+      messages.replaceChildren();
+      setWaiting(false);
+      addMessage("assistant", welcomeMessage);
+      input.focus();
+    });
+
+    async function restoreSession() {
+      if (!sessionId) {
+        addMessage("assistant", welcomeMessage);
+        return;
+      }
+      setBusy(true);
+      try {
+        const response = await fetch(`/agent/sessions/${sessionId}`);
+        if (response.status === 404) {
+          sessionId = null;
+          localStorage.removeItem(storageKey);
+          addMessage("assistant", welcomeMessage);
+          return;
+        }
+        const body = await parseResponse(response);
+        messages.replaceChildren();
+        if (body.messages.length === 0) {
+          addMessage("assistant", welcomeMessage);
+        } else {
+          body.messages.forEach((message) => addMessage(message.role, message.content));
+        }
+        setWaiting(body.status === "waiting_human");
+      } catch (error) {
+        addMessage("assistant", welcomeMessage);
+        addMessage("assistant", `暂时无法恢复历史会话：${error.message}`);
+      } finally {
+        setBusy(false);
+        input.focus();
+      }
+    }
+
+    restoreSession();
+  </script>
+</body>
+</html>
