@@ -6,12 +6,17 @@ import re
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, Field
 
-from qlora_lab.agent.knowledge import KnowledgeBase
+
+class KnowledgeSearch(Protocol):
+    @property
+    def ready(self) -> bool: ...
+
+    def search(self, query: str, top_k: int = 4) -> list[dict[str, object]]: ...
 
 ORDER_ID_PATTERN = re.compile(r"\b(?=[A-Za-z0-9_-]*\d)[A-Za-z][A-Za-z0-9_-]{2,63}\b")
 
@@ -193,9 +198,9 @@ class MockBackendClient:
 
 def build_tools(
     client: MockBackendClient,
-    knowledge: KnowledgeBase | None = None,
+    knowledge: KnowledgeSearch | None = None,
     *,
-    rag_top_k: int = 3,
+    rag_top_k: int = 4,
 ):  # type: ignore[no-untyped-def]
     try:
         from langchain.tools import tool
@@ -265,13 +270,18 @@ def build_tools(
 
         @tool("search_knowledge")
         def search_knowledge(query: str) -> str:
-            """查询产品说明、配送和售后政策等非实时知识；不要用于查询具体订单状态。"""
+            """查询维修、产品、配送和售后知识。返回内容已强制向量召回并 Rerank。"""
             results = knowledge.search(query, top_k=rag_top_k)
             return json.dumps(
                 {
                     "ok": bool(results),
+                    "reranked": bool(results),
                     "results": results,
-                    "message": None if results else "知识库中没有找到相关内容。",
+                    "message": (
+                        None
+                        if results
+                        else "没有找到经 Rerank 验证的内容，或 RAG 服务暂时不可用。"
+                    ),
                 },
                 ensure_ascii=False,
             )

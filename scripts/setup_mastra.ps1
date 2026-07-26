@@ -31,6 +31,23 @@ if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
 }
 
+$requiredEnvKeys = @(
+    "RAG_MODEL_SERVICE_URL",
+    "QDRANT_URL",
+    "QDRANT_COLLECTION",
+    "MASTRA_INTERNAL_SEARCH_KEY",
+    "RAG_REQUEST_TIMEOUT_MS",
+    "RAG_MIN_RERANK_SCORE"
+)
+$envContent = Get-Content ".env"
+$missingEnvKeys = $requiredEnvKeys | Where-Object {
+    $key = $_
+    -not ($envContent | Where-Object { $_ -match "^\s*$([regex]::Escape($key))\s*=" })
+}
+if ($missingEnvKeys.Count -gt 0) {
+    throw "mastra\.env is missing: $($missingEnvKeys -join ', '). Merge the new values from mastra\.env.example and retry."
+}
+
 Write-Host "Installing pinned Mastra dependencies..."
 Invoke-ProjectPnpm -PnpmArgs @("install", "--frozen-lockfile")
 Write-Host "Building the approved esbuild binary..."

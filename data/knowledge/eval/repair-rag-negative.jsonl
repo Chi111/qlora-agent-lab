@@ -1,0 +1,6 @@
+{"case_id":"negative-001","query":"请解释量子引力弦理论","must_return_no_answer":true}
+{"case_id":"negative-002","query":"明天上海天气怎么样","must_return_no_answer":true}
+{"case_id":"negative-003","query":"帮我写一个股票短线策略","must_return_no_answer":true}
+{"case_id":"negative-004","query":"唐朝最著名的诗人是谁","must_return_no_answer":true}
+{"case_id":"negative-005","query":"用 Python 实现快速排序","must_return_no_answer":true}
+{"case_id":"negative-006","query":"推荐一部周末看的科幻电影","must_return_no_answer":true}

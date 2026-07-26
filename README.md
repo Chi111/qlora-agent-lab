@@ -6,26 +6,31 @@
 2. 使用 PyTorch、Transformers 和 FastAPI 封装 OpenAI 风格推理接口；
 3. 使用 LangChain 或 Mastra Agent 接入本地模型；
 4. Agent 通过 Tools 查询 Mock 订单后端、创建客服工单；
-5. 使用本地知识库回答产品、配送与售后问题；
-6. 提供浏览器客服页面、SQLite 多轮会话留存和确定性的转人工入口；
-7. 使用独立评测集覆盖缺参数、404、超时、工具权限和提示词注入等边界。
+5. 使用 BGE-M3 + Qdrant + BGE Reranker 检索维修、产品、配送与售后知识；
+6. 提供由 `@mastra/client-js` 驱动的 React 客服页面、流式回答、来源分数和工具审批；
+7. 通过人工审核工作流，把脱敏后的历史维修经验保存为 Markdown 并增量写入向量库；
+8. 使用独立评测集覆盖检索、Rerank、缺参数、超时、工具权限和提示词注入等边界。
 
 ## 运行架构
 
 ```text
-                         ┌──────────────────────────┐
-                         │ QLoRA inference :8000    │
-浏览器 ──> Agent :8002 ──> │ /v1/chat/completions    │
-              │           └──────────────────────────┘
-              ├─────────> 本地 Markdown 知识库（CPU BM25 检索）
-              ├─────────> SQLite 会话记录 / 人工接管状态
-              └─────────> Mock backend :8001
-                           ├─ GET  /api/orders/{id}
-                           └─ POST /api/tickets
+React :5173 ── @mastra/client-js ──> Mastra Agent/API :4111
+                                      ├─> QLoRA inference :8000（底座 + LoRA）
+                                      ├─> Mock orders/tools :8001
+                                      └─> RAG
+                                           BGE-M3 :8003
+                                              ↓ 1024 维
+                                           Qdrant :6333（Top 12）
+                                              ↓
+                                           BGE Reranker :8003（Top 4）
+
+LangChain Agent :8002 ──只读内部接口──> 同一套 Mastra RAG
 ```
 
-三个服务是独立进程。Agent 不直接加载 GPU 模型，推理服务只加载一次模型，并把 GPU
+服务是独立进程。Agent 不直接加载 GPU 模型，推理服务只加载一次模型，并把 GPU
 生成请求串行化。不要为推理服务配置多个 Uvicorn worker，否则每个 worker 都会复制一份模型。
+Embedding 与 Reranker 固定在 CPU 上；Rerank 失败时检索会关闭本次回答，不会退化为使用
+未经重排的向量候选。
 
 ## 你的机器该选哪个配置
 
@@ -64,6 +69,8 @@ Ollama 中的 `qwen3.5:9b` 是 GGUF 推理模型，不能直接作为该训练�
 - 较新的 NVIDIA 驱动；
 - Python 3.11 x64；
 - Git；
+- Docker Desktop（本地 Qdrant）；
+- Node.js 22.18 或更新版本（Mastra 与 React 前端）；
 - 至少 30GB 可用磁盘；
 - 建议把 Windows 分页文件设置为 24～32GB。
 
@@ -196,10 +203,16 @@ artifacts/qlora-adapter/
 |---|---|---|
 | QLoRA inference | `http://127.0.0.1:8000` | OpenAI 风格模型接口 |
 | Mock backend | `http://127.0.0.1:8001` | 订单和工单接口 |
-| LangChain Agent | `http://127.0.0.1:8002` | 对外 Agent 接口 |
+| LangChain Agent | `http://127.0.0.1:8002` | 兼容原 Agent 接口，复用 Mastra RAG |
+| BGE retrieval | `http://127.0.0.1:8003` | CPU Embedding 与 Rerank |
+| Qdrant | `http://127.0.0.1:6333` | 1024 维维修知识向量库 |
+| Mastra | `http://127.0.0.1:4111` | Agent、RAG、工作流与内部检索接口 |
+| React web | `http://127.0.0.1:5173` | `@mastra/client-js` 客服页面 |
 
-浏览器打开 `http://127.0.0.1:8002/` 即可使用客服页面。会话记录默认写入
-`artifacts/conversations.sqlite3`，刷新页面后仍可通过浏览器保存的 session ID 延续对话。
+`serve_all.ps1` 现在会转到完整的 `serve_mastra.ps1`，因此推荐的客服页面是
+`http://127.0.0.1:5173/`。原 LangChain API 仍位于 8002，并通过 Mastra 内部只读接口
+使用同一套强制 Rerank 知识库。会话记录默认写入
+`artifacts/conversations.sqlite3`。
 
 脚本目前以独立 Windows 进程启动服务。完成测试后，可在任务管理器中结束对应 Python
 进程。不要在模型服务上开启 `--reload` 或增加 `--workers`。
@@ -236,7 +249,7 @@ Mastra 版本位于 `mastra/`，使用 TypeScript/Node.js 编排 Agent，但模�
 服务完成。它已经接入：
 
 - `get_order`：实时查询订单，只把订单号、状态、商品和更新时间交给模型；
-- `search_knowledge`：在 `data/knowledge/*.md` 中进行本地 BM25 检索；
+- `search_knowledge`：BGE-M3 向量化、Qdrant Top 12 召回、BGE Reranker 强制重排后取 Top 4；
 - `create_ticket`：创建工单，带稳定幂等键，并强制要求 Mastra 人工批准；
 - SQLite 多轮记忆；
 - 中文客服范围、专业克制语气、非客服问题拒答和知识库提示注入边界。
@@ -266,14 +279,15 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\serve_mastra.ps1
 ```
 
-脚本会启动 Mock 后端（8001）、QLoRA 推理服务（8000）和 Mastra Studio（4111），并等待
-模型真正加载完成。浏览器打开：
+脚本会启动 Qdrant（6333）、BGE 检索服务（8003）、Mock 后端（8001）、QLoRA 推理服务
+（8000）、原 LangChain Agent（8002）、Mastra（4111）和 React 前端（5173），然后重建
+并原子切换知识库别名。首次运行会下载 BGE 模型，时间取决于网络和 CPU。客服页面打开：
 
 ```text
-http://127.0.0.1:4111
+http://127.0.0.1:5173
 ```
 
-在 Studio 中选择 `customer-service-agent`。首次建议依次测试：
+Mastra Studio/API 位于 `http://127.0.0.1:4111`。首次建议依次测试：
 
 1. `帮我查询订单 A100。`
 2. `七天内可以退货吗？`
@@ -285,7 +299,12 @@ http://127.0.0.1:4111
 
 ```powershell
 .\scripts\smoke_test_mastra.ps1
+.\scripts\evaluate_rag.ps1 -ApiKey "change-me-local-rag-key"
 ```
+
+`evaluate_rag.ps1` 会让 30 条正例和 6 条无答案反例真实经过
+BGE-M3 → Qdrant → BGE Reranker，输出 Hit@4、Top-1 和无答案准确率；加 `-Strict`
+可按作业基线返回失败退出码。阈值需在本机实测后再调整，不要只凭单元测试宣称检索效果。
 
 如果只修改了 Mastra 提示词或工具代码，不需要重训；如果要让 1.7B 模型本身更稳定地形成
 新语气和拒答习惯，则同步新的 `data/train.jsonl` / `data/eval.jsonl` 后重新训练 adapter。
@@ -299,13 +318,51 @@ LOCAL_LLM_BASE_URL=http://127.0.0.1:8000/v1
 LOCAL_LLM_MODEL=local-qlora
 MOCK_API_URL=http://127.0.0.1:8001
 KNOWLEDGE_DIR=../data/knowledge
+RAG_MODEL_SERVICE_URL=http://127.0.0.1:8003
+RAG_MIN_RERANK_SCORE=0.2
+QDRANT_URL=http://127.0.0.1:6333
+QDRANT_COLLECTION=repair_knowledge_current
+MASTRA_INTERNAL_SEARCH_KEY=change-me-local-rag-key
 ```
 
 SQLite 默认稳定写入 `mastra\mastra.db`；只有连接外部 libSQL 时才需要另设
 `MASTRA_DB_URL`。
 
+升级旧环境时，安装脚本会检查新增的 RAG 配置；若提示缺失，请把 `.env.example` 和
+`mastra\.env.example` 中的新字段合并到已有文件。根目录的
+`AGENT_RAG_INTERNAL_API_KEY` 必须与 Mastra 的 `MASTRA_INTERNAL_SEARCH_KEY` 完全一致，
+否则原 LangChain Agent 会拒绝访问只读 RAG 接口。
+
 这个演示没有用户登录和订单归属校验，只能监听本机地址测试。部署到局域网或公网前，必须
 在 Mastra API 和订单后端前增加身份认证、授权、限流与审计。
+
+### 4. 维修文档与向量入库
+
+主知识文件：
+
+- `data/knowledge/refrigerator-repair.md`
+- `data/knowledge/television-repair.md`
+- `data/knowledge/monitor-repair.md`
+
+文档使用 YAML frontmatter 标注类型和版本。入库会按 Markdown 标题切片，生成稳定 ID，
+写入完整来源 metadata。手动重建和检查：
+
+```powershell
+Set-Location mastra
+pnpm rag:rebuild
+pnpm rag:check
+```
+
+重建先写暂存集合，校验 1024 维和向量数量后再切换
+`repair_knowledge_current` alias；失败时保留旧集合。
+
+### 5. 过往维修经验工作流
+
+`save-repair-experience` 工作流接收设备类型、故障现象、诊断、处理步骤、结果和安全提示。
+它先生成 `data/knowledge/experience/drafts/*.md`，脱敏手机号、邮箱和证件号，并在人工审核
+处暂停。只有批准后才移动到 `approved/` 并增量向量化；拒绝不会写入正式向量库。课程中的
+向量数据库经验整理在
+`data/knowledge/experience/approved/vector-database-experience.md`。
 
 ## 先用现有 Ollama 测试 Agent
 
@@ -322,8 +379,9 @@ ollama run qwen3.5:9b
 .\scripts\serve_with_ollama.ps1
 ```
 
-该模式只启动 Mock 后端和 Agent，并把 LangChain 的模型地址设为
-`http://127.0.0.1:11434/v1`。它用于先验证 Agent/Tools，不代表已经使用 QLoRA adapter。
+该模式启动同一套 Qdrant、BGE、Rerank、Mastra、LangChain Agent 和 React 前端，只把
+语言模型地址切换到 `http://127.0.0.1:11434/v1`。它用于先验证完整 RAG/Agent/Tools
+闭环，不代表已经使用 QLoRA adapter。
 
 ## API
 
@@ -388,8 +446,10 @@ POST /agent/sessions/{session_id}/handoff
 在客服询问后明确同意；否则工具返回 `WRITE_NOT_AUTHORIZED`。订单工具只把订单号、
 状态、商品和更新时间交给模型，Mock 后端中的客户姓名、金额不会进入模型上下文。
 
-默认检索器是 CPU 上的轻量 BM25，不占用宝贵的 8GB GPU 显存。后续数据量增大后，可以
-把 `KnowledgeBase` 替换为独立 embedding/向量库服务，Agent 的工具契约无需改变。
+默认检索器是独立 CPU 服务上的 `BAAI/bge-m3` 与 `BAAI/bge-reranker-v2-m3`。Mastra
+负责 Markdown 切片、Qdrant 向量读写、Top 12 召回和 Top 4 重排；原 LangChain Agent
+通过受内部密钥保护的只读接口复用同一结果。`reranked` 不为 `true` 时两个 Agent 都不会
+采用候选内容。
 
 ## 配置
 
@@ -401,8 +461,11 @@ INFERENCE_ADAPTER_PATH=artifacts/qlora-adapter
 AGENT_MODEL_BASE_URL=http://127.0.0.1:8000/v1
 AGENT_MODEL_NAME=local-qlora
 AGENT_MOCK_API_URL=http://127.0.0.1:8001
-AGENT_KNOWLEDGE_DIR=data/knowledge
+AGENT_RAG_BASE_URL=http://127.0.0.1:4111/api
+AGENT_RAG_INTERNAL_API_KEY=change-me-local-rag-key
 AGENT_CONVERSATION_DB_PATH=artifacts/conversations.sqlite3
+RETRIEVAL_DEVICE=cpu
+RETRIEVAL_EMBEDDING_DIMENSIONS=1024
 ```
 
 Adapter 会记录训练时的 base model。推理服务发现 adapter 与

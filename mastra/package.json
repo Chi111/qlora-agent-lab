@@ -11,15 +11,25 @@
     "dev": "mastra dev",
     "build": "mastra build",
     "start": "mastra start",
+    "rag:check": "tsx --env-file=.env src/mastra/rag/ingest.ts --check",
+    "rag:ingest": "tsx --env-file=.env src/mastra/rag/ingest.ts",
+    "rag:rebuild": "tsx --env-file=.env src/mastra/rag/ingest.ts --rebuild",
+    "web:dev": "pnpm --dir web dev",
+    "web:build": "pnpm --dir web build",
+    "web:test": "pnpm --dir web test",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "check": "tsc --noEmit && vitest run && mastra build"
+    "test": "vitest run tests",
+    "check": "tsc --noEmit && vitest run tests && mastra build && pnpm web:test && pnpm web:build"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "3.0.14",
     "@mastra/core": "1.52.1",
     "@mastra/libsql": "1.16.0",
     "@mastra/memory": "1.23.1",
+    "@mastra/qdrant": "1.1.1",
+    "@mastra/rag": "2.4.2",
+    "ai": "6.0.182",
+    "gray-matter": "4.0.3",
     "zod": "3.25.76"
   },
   "devDependencies": {

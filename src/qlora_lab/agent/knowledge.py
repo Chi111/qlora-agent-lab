@@ -5,6 +5,9 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+import httpx
 
 WORD_PATTERN = re.compile(r"[A-Za-z0-9]+|[\u4e00-\u9fff]")
 
@@ -37,7 +40,7 @@ class KnowledgeBase:
         )
         self._document_frequency: Counter[str] = Counter()
         for counts in self._term_counts:
-            self._document_frequency.update(counts)
+            self._document_frequency.update(counts.keys())
 
     @staticmethod
     def _load_documents(directory: Path) -> list[KnowledgeDocument]:
@@ -107,6 +110,74 @@ class KnowledgeBase:
                     "source": document.source,
                     "score": round(score, 4),
                     "content": document.content[:4000],
+                }
+            )
+        return results
+
+
+class RagKnowledgeClient:
+    """Read-only client for Mastra's vector retrieval + mandatory rerank route."""
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        timeout_seconds: float,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.timeout_seconds = timeout_seconds
+        self._client = client
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.base_url and self.api_key)
+
+    def search(self, query: str, top_k: int = 4) -> list[dict[str, object]]:
+        request = self._client.post if self._client is not None else httpx.post
+        try:
+            response = request(
+                f"{self.base_url}/internal/knowledge/search",
+                headers={"x-internal-api-key": self.api_key},
+                json={"query": query, "topK": top_k, "knowledgeScope": "repair"},
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+            payload: Any = response.json()
+        except (httpx.HTTPError, ValueError):
+            return []
+
+        if (
+            not isinstance(payload, dict)
+            or payload.get("ok") is not True
+            or payload.get("reranked") is not True
+            or not isinstance(payload.get("results"), list)
+        ):
+            return []
+
+        results: list[dict[str, object]] = []
+        for item in payload["results"][:top_k]:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            results.append(
+                {
+                    key: item[key]
+                    for key in (
+                        "document_id",
+                        "title",
+                        "source",
+                        "section",
+                        "content",
+                        "rank",
+                        "score",
+                        "vector_score",
+                        "rerank_score",
+                    )
+                    if key in item
                 }
             )
         return results
